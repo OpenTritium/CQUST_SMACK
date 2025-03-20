@@ -1,5 +1,5 @@
 use super::TopicType;
-use anyhow::Context;
+use super::config;
 use anyhow::Result;
 use anyhow::anyhow;
 use reqwest::Client;
@@ -98,10 +98,8 @@ impl Llm {
         }
     }
 
-    const API_KEY: &str = "sk-cqmzosmsshajoleboupmgjppjgljfzuytzdoztafyrghrrpq";
-
     pub async fn init(&self) -> Result<()> {
-        let path = Path::new("./cqust_sm_2024.md");
+        let path = Path::new(&config().document_path);
         let mut buf: Vec<u8> = vec![];
         File::open(path).await?.read(&mut buf).await?;
         let doc = String::from_utf8_lossy(&buf).to_string();
@@ -129,7 +127,7 @@ impl Llm {
         let resp = self
             .client
             .post("https://api.siliconflow.cn/v1/files")
-            .bearer_auth(Self::API_KEY)
+            .bearer_auth(config().llm_api_key.clone())
             .multipart(mp)
             .send()
             .await?;
@@ -150,7 +148,7 @@ impl Llm {
         let resp = self
             .client
             .post("https://api.siliconflow.cn/v1/chat/completions")
-            .bearer_auth(Self::API_KEY)
+            .bearer_auth(config().llm_api_key.clone())
             .json(&ChatRequest::new(vec![msg, self.prompt_msg.clone()]))
             .send()
             .await?;

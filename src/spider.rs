@@ -10,6 +10,8 @@ use std::{collections::HashMap, str::FromStr, time::Duration};
 use tokio::time::{self, Instant};
 use tracing::{info, warn};
 
+use crate::config;
+
 pub type Options = Vec<String>;
 pub type Topics = HashMap<TopicType, Vec<String>>;
 
@@ -79,7 +81,7 @@ impl Page {
         Self {
             headers: {
                 let mut header = HeaderMap::new();
-                header.insert(COOKIE, HeaderValue::from_str("ASP.NET_SessionId=zwkzh5vatwobtcq0hsaounsc; .ASPXAUTH=782D2F80DFC55FF17423DB799AC7F3A785D426E7A88722AD7D8961A2DAA0F2B80AC5FC7EF23EF47A21B8A53F089C95BB70E2DE569A4568E62A9B105CE8127A57251C8E6FA47FA640769827833E310B3369DE8FDE8A614B773118FA81D2EF3D937BA1E58B1533F757451CAE4FDDDB981601FAB771971EEB1DDD1196F9312B7B44ABE4F32420AD2C2FFD64D4E43AF86C0538DEDE34502EBAF04C8E07811EFA4D9B644E283603BDFF4F4F403D9E0CA209FEF21D7E33F4F413E9188797CCD72BC34282C526E6F39BDE4691EE7A69E51CDA4CD9490B4735B017B69E09C87B5308FB80E228CCEF").unwrap());
+                header.insert(COOKIE, HeaderValue::from_str(&config().cookie).unwrap());
                 header
             },
             client: Client::new(),
