@@ -1,16 +1,17 @@
-use std::{collections::HashMap, str::FromStr};
-
 use anyhow::Result;
 use reqwest::{
     Client, Url,
     header::{COOKIE, HeaderMap, HeaderValue},
 };
 use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sled::Db;
+use std::{collections::HashMap, str::FromStr, time::Duration};
+use tokio::time::{self, Instant};
+use tracing::{info, warn};
 
-type Topic = (String, Vec<String>);
-type Topics = HashMap<String, Vec<String>>;
+pub type Options = Vec<String>;
+pub type Topics = HashMap<TopicType, Vec<String>>;
 
 pub struct Page {
     headers: HeaderMap,
@@ -23,8 +24,23 @@ pub enum Question {
     TrueOrFalse(u8),
 }
 
+#[derive(Debug, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Clone)]
+pub enum TopicType {
+    MultiChoice(String),
+    MultiSelect(String),
+    TrueOrFalse(String),
+}
+
+impl From<TopicType> for String {
+    fn from(value: TopicType) -> Self {
+        match value {
+            TopicType::MultiChoice(s) | TopicType::MultiSelect(s) | TopicType::TrueOrFalse(s) => s,
+        }
+    }
+}
 impl Question {
-    fn select(&self, dom: &Html) -> Result<Topic> {
+    /// 选出题目文本和选项文本
+    fn select(&self, dom: &Html) -> Result<(String, Vec<String>)> {
         let gen_id = |t, n, count| {
             const PREFIX: &str = "Mydatalist__ctl0_Mydatalist";
             let question = format!("#{PREFIX}{t}__ctl{n}_tm");
@@ -63,37 +79,64 @@ impl Page {
         Self {
             headers: {
                 let mut header = HeaderMap::new();
-                header.insert(COOKIE, HeaderValue::from_str("ASP.NET_SessionId=q23nsyj50oxm5tpxbcoxqwyo; .ASPXAUTH=C9A211E8281471661EAA8412937CF0A2A8ACFDB9640005A556C552E03A9B0B4A30AA3D5B79443C85824F5F6BDB992A70555C209FF19E5D9AD368C1EB74F065604F8246DCFE92CA13D1D21CD94045FFCA801ABD2BD6FB17298A693DFA7CF47070E0609A049018523919E842905D959D059260850BEC261402A4ABAF102A5A0752BD0AABA3BA6C97ABC127442FB6BF7E2D6861AA578D69E67A152A64F1E95507AE37F63333E164A20F639DA0EB5F9C7F37290FFF94A3EE3414E0FFC5409874F4E2E3B0951F47BCE81570CFE465A5775E2275DE14D40C1F37C038502626DC03C04DD16BAEF5").unwrap());
+                header.insert(COOKIE, HeaderValue::from_str("ASP.NET_SessionId=zwkzh5vatwobtcq0hsaounsc; .ASPXAUTH=782D2F80DFC55FF17423DB799AC7F3A785D426E7A88722AD7D8961A2DAA0F2B80AC5FC7EF23EF47A21B8A53F089C95BB70E2DE569A4568E62A9B105CE8127A57251C8E6FA47FA640769827833E310B3369DE8FDE8A614B773118FA81D2EF3D937BA1E58B1533F757451CAE4FDDDB981601FAB771971EEB1DDD1196F9312B7B44ABE4F32420AD2C2FFD64D4E43AF86C0538DEDE34502EBAF04C8E07811EFA4D9B644E283603BDFF4F4F403D9E0CA209FEF21D7E33F4F413E9188797CCD72BC34282C526E6F39BDE4691EE7A69E51CDA4CD9490B4735B017B69E09C87B5308FB80E228CCEF").unwrap());
                 header
             },
             client: Client::new(),
         }
     }
+
     pub async fn fetch(&self) -> Result<Topics> {
         let dom = self.client.get(Url::from_str("http://xgbd.cqust.edu.cn:866/txxm/dkkt.aspx?xq=2024-2025-2&nd=2024&km=tm_ks_jy&tmfl=“行为养成·智慧指南”知识竞答").unwrap()).headers(self.headers.clone()).send().await?.text().await?;
         let dom = Html::parse_document(&dom);
-        let mut paper: HashMap<String, Vec<String>> = Default::default();
+        let mut paper: Topics = Default::default();
         for i in 0..4 {
             let q = Question::MultiChoice(i);
             let (q, c) = q.select(&dom)?;
-            paper.insert(q, c);
+            paper.insert(TopicType::MultiChoice(q), c);
         }
         for i in 0..20 {
             let q = Question::MultiSelect(i);
             let (q, c) = q.select(&dom)?;
-            paper.insert(q, c);
+            paper.insert(TopicType::MultiSelect(q), c);
         }
         for i in 0..15 {
             let q = Question::TrueOrFalse(i);
             let (q, c) = q.select(&dom)?;
-            paper.insert(q, c);
+            paper.insert(TopicType::TrueOrFalse(q), c);
         }
-        println!("{:?}", paper);
         Ok(paper)
     }
-    pub fn cache(db: &Db, data: &Topics) {
-        data.iter().for_each(|(q, cs)| {
-            db.insert(q.as_bytes(), json!(cs).to_string().as_bytes()).unwrap();
-        });
+
+    pub async fn caching() {
+        let timeout = Duration::from_hours(4);
+        time::timeout(timeout, async {
+            let sb = sled::open("./cache").unwrap();
+            let mut interval = time::interval(Duration::from_secs(3));
+            let mut prev_len = sb.len();
+            let mut last_change = Instant::now();
+            loop {
+                interval.tick().await;
+                let data = Page::new().fetch().await.unwrap();
+                data.iter().for_each(|(q, cs)| {
+                    sb.insert(
+                        json!(q).to_string().as_bytes(),
+                        json!(cs).to_string().as_bytes(),
+                    )
+                    .unwrap();
+                });
+                let current_len = sb.len();
+                info!("已经爬下来{current_len}条");
+                if current_len != prev_len {
+                    prev_len = current_len;
+                    last_change = Instant::now();
+                } else if Instant::now().duration_since(last_change) > Duration::from_mins(3) {
+                    warn!("No changes for 3 minutes, exiting...");
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
     }
 }
