@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CQUST 学工考试自动化脚本
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  自动处理iframe内动态加载的考试内容
+// @version      1.5
+// @description  自动处理iframe内动态加载的考试内容（持续监听模式）
 // @author       OpenTritium
 // @match        http://xgbd.cqust.edu.cn:866/txxm/default.aspx*
 // @grant        GM_xmlhttpRequest
@@ -14,129 +14,125 @@
   "use strict";
 
   const TARGET_IFRAME_ID = "r_3_3";
-  const WAIT_TIMEOUT = 15000;
   const CHECK_INTERVAL = 500;
   const SCRIPT_NAME = "CQUST_SMACK";
-  const LIB =
-    "https://github.moeyy.xyz/https://raw.githubusercontent.com/OpenTritium/CQUST_SMACK/refs/heads/master/solution_mapping.json";
-  let isOperationDone = false;
+  const LIB = "https://github.moeyy.xyz/https://raw.githubusercontent.com/OpenTritium/CQUST_SMACK/refs/heads/master/solution_mapping.json";
+  let isProcessing = false;
 
-  const executeOperations = () => {
-    if (isOperationDone) return;
-    const targetIframe = document.getElementById(TARGET_IFRAME_ID);
+  // 检查iframe是否已加载完成
+  const isIframeLoaded = (iframe) => {
+    return !!iframe && (iframe.contentDocument?.readyState === 'complete');
+  };
+
+  // 执行核心操作
+  const executeOperations = (iframe) => {
+    if (isProcessing) return;
+    isProcessing = true;
+
+    const targetIframe = iframe || document.getElementById(TARGET_IFRAME_ID);
     if (!targetIframe) {
       console.warn(`[${SCRIPT_NAME}] 未找到目标 iframe`);
+      isProcessing = false;
       return;
     }
 
-    const select = (jsonData, iframeDoc, topicType, t) => {
-      let topic = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_tm`;
-      const topicSpan = iframeDoc.getElementById(topic);
-      console.log(`[${SCRIPT_NAME}] 题目：${topicSpan.textContent}`);
-      let topic_text = topicSpan.textContent;
-      let utf8_buf = new TextEncoder().encode(topic_text).buffer;
-      let hash = window.XXH.h64(utf8_buf, 0).toString(10);
-      let cc = jsonData[hash];
-      if (cc == undefined) {
-        console.warn(`[${SCRIPT_NAME}] 找不到 hash：${hash}`);
+    // 确保iframe内容已加载
+    if (!isIframeLoaded(targetIframe)) {
+      console.log(`[${SCRIPT_NAME}] 等待iframe加载完成`);
+      setTimeout(() => executeOperations(targetIframe), CHECK_INTERVAL);
+      return;
+    }
+
+    // 获取iframe文档
+    const iframeDoc = targetIframe.contentDocument || targetIframe.contentWindow.document;
+
+    // 请求题库数据
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: LIB,
+      headers: { Accept: "application/json" },
+      onload: (response) => {
+        if (response.status >= 200 && response.status < 300) {
+          const jsonData = JSON.parse(response.responseText);
+          processQuestions(jsonData, iframeDoc);
+        } else {
+          console.error(`[${SCRIPT_NAME}] 请求失败，状态码：${response.status}`);
+        }
+        isProcessing = false;
+      },
+      onerror: (error) => {
+        console.error(`[${SCRIPT_NAME}] 题库拉取失败：${error}`);
+        isProcessing = false;
+      }
+    });
+  };
+
+  // 处理题目选择
+  const processQuestions = (jsonData, iframeDoc) => {
+    const selectAnswer = (topicType, t) => {
+      const topicId = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_tm`;
+      const topicSpan = iframeDoc.getElementById(topicId);
+      if (!topicSpan) return;
+
+      const topicText = topicSpan.textContent;
+      const hash = window.XXH.h64(new TextEncoder().encode(topicText).buffer, 0).toString(10);
+      const answer = jsonData[hash];
+
+      if (!answer) {
+        console.warn(`[${SCRIPT_NAME}] 未找到对应答案：${hash}`);
         return;
       }
-      for (c in cc) {
-        let input = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_xz_${c}`;
-        const OptionInput = iframeDoc.getElementById(input);
-        if (OptionInput && topicSpan) {
-          OptionInput.click();
-          console.log(`[${SCRIPT_NAME}] 已点击`);
-        } else {
-          setTimeout(iframeLoader, CHECK_INTERVAL);
+
+      answer.forEach(c => {
+        const inputId = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_xz_${c}`;
+        const optionInput = iframeDoc.getElementById(inputId);
+        if (optionInput) {
+          optionInput.click();
+          console.log(`[${SCRIPT_NAME}] 题目[${topicText}] 已选择答案：${c}`);
         }
-      }
+      });
     };
 
-    const active_click = (jsonData, iframeDoc) => {
-      for (let t = 0; t != 4; ++t) {
-        const multiChoice = 1;
-        select(jsonData, iframeDoc, multiChoice, t);
-      }
-      for (let t = 0; t != 20; ++t) {
-        const multiSelect = 2;
-        select(jsonData, iframeDoc, multiSelect, t);
-      }
-      for (let t = 0; t != 15; ++t) {
-        const trueOrFalse = 3;
-        select(jsonData, iframeDoc, trueOrFalse, t);
-      }
-      isOperationDone = true;
-    };
-
-    const iframeLoader = () => {
-      try {
-        const iframeDoc =
-          targetIframe.contentDocument || targetIframe.contentWindow.document;
-        GM_xmlhttpRequest({
-          method: "GET",
-          url: LIB,
-          headers: {
-            Accept: "application/json",
-          },
-          onload: (response) => {
-            try {
-              if (response.status >= 200 && response.status < 300) {
-                const jsonData = JSON.parse(response.responseText);
-                console.log(jsonData);
-                active_click(jsonData, iframeDoc);
-              } else {
-                console.error(
-                  `[${SCRIPT_NAME}] 请求失败，状态码：${response.status}`
-                );
-              }
-            } catch (error) {
-              console.error(`[${SCRIPT_NAME}] 题库解析失败：${error}`);
-            }
-          },
-          onerror: function (error) {
-            console.error(`[${SCRIPT_NAME}] 题库拉取失败：${error}`);
-          },
-        });
-      } catch (e) {
-        console.error(`[${SCRIPT_NAME}] 跨域访问被阻止，请确认网站权限`);
-      }
-    };
-
-    if (targetIframe.contentDocument.readyState === "complete") {
-      iframeLoader();
-    } else {
-      targetIframe.onload = iframeLoader;
-    }
-  };
-
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get("dfldm") !== "12") return;
-
-  const main = () => {
-    executeOperations();
-    const observer = new MutationObserver(() => {
-      if (!isOperationDone) {
-        executeOperations();
+    // 遍历所有题型
+    [1, 2, 3].forEach((topicType, index) => {
+      const count = [4, 20, 15][index]; // 单选/多选/判断题数量
+      for (let t = 0; t < count; t++) {
+        selectAnswer(topicType, t);
       }
     });
 
-    observer.observe(document.body, {
+    console.log(`[${SCRIPT_NAME}] 自动答题完成`);
+  };
+
+  // 主监听函数
+  const main = () => {
+    // 监听整个文档变化（包括iframe内容变化）
+    const docObserver = new MutationObserver(() => {
+      const targetIframe = document.getElementById(TARGET_IFRAME_ID);
+      if (targetIframe) {
+        executeOperations(targetIframe);
+      } else {
+        console.log(`[${SCRIPT_NAME}] 检测到元素变化，但iframe不存在`);
+      }
+    });
+
+    // 开始观察整个文档变化
+    docObserver.observe(document.body, {
       childList: true,
       subtree: true,
+      attributes: true,
+      characterData: true
     });
 
-    setTimeout(() => {
-      observer.disconnect();
-      if (!isOperationDone) {
-        console.warn(
-          `[${SCRIPT_NAME}] 操作未完成，可能原因：
-                  1. 元素ID已变更
-                  2. 跨域限制未解除
-                  3. 内容加载超时`
-        );
-      }
-    }, WAIT_TIMEOUT);
+    // 初始化时立即尝试执行
+    executeOperations();
   };
-  setTimeout(main, 2000);
+
+  // 延迟执行确保DOM加载
+  setTimeout(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("dfldm") === "12") {
+      main();
+    }
+  }, 2000);
 })();
