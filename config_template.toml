@@ -1,0 +1,4 @@
+llm_api_key = "sk-XXX"  # 硅基流动 LLM API 密钥
+solve_parallel = 4
+document_path = "./cqust_sm_2024.md"  # 学生手册路径，markdown 格式
+cookie = "ASP.NET_SessionId=XXX; .ASPXAUTH=XXX" # 学工系统 cookie 

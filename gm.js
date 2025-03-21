@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         学工考试自动化脚本
+// @name         CQUST 学工考试自动化脚本
 // @namespace    http://tampermonkey.net/
 // @version      1.2
 // @description  自动处理iframe内动态加载的考试内容
-// @author       YourName
+// @author       OpenTritium
 // @match        http://xgbd.cqust.edu.cn:866/txxm/default.aspx*
-// @grant        none
-// @require      https://cdn.jsdelivr.net/npm/murmur-128@1.0.0/index.js
+// @grant        GM_xmlhttpRequest
+// @require      https://cdn.jsdelivr.net/npm/xxhashjs@0.2.2/build/xxhash.min.js
 // @run-at       document-end
 // ==/UserScript==
 
@@ -17,6 +17,8 @@
   const WAIT_TIMEOUT = 15000;
   const CHECK_INTERVAL = 500;
   const SCRIPT_NAME = "CQUST_SMACK";
+  const LIB =
+    "https://github.moeyy.xyz/https://raw.githubusercontent.com/OpenTritium/CQUST_SMACK/refs/heads/master/solution_mapping.json";
   let isOperationDone = false;
 
   const executeOperations = () => {
@@ -27,35 +29,40 @@
       return;
     }
 
-    const active_click = (jsonData, iframeDoc) => {
-      const select = (jsonData, iframeDoc, topicType, t) => {
-        let topic = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_tm`;
-        const topicSpan = iframeDoc.getElementById(topic);
-        let topic_text = topicSpan.textContent;
-        let hash = window.murmur128(topic_text);
-        let cc = jsonData[hash];
-        if (cc == undefined) return;
-        console.log(`[${SCRIPT_NAME}] 题目：${topicSpan.textContent}`);
-        for (c in cc) {
-          let input = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_xz_${c}`;
-          const OptionInput = iframeDoc.getElementById(input);
-          if (OptionInput && topicSpan) {
-            OptionInput.click();
-            console.log(`[${SCRIPT_NAME}] 已点击`);
-          } else {
-            setTimeout(iframeLoader, CHECK_INTERVAL);
-          }
+    const select = (jsonData, iframeDoc, topicType, t) => {
+      let topic = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_tm`;
+      const topicSpan = iframeDoc.getElementById(topic);
+      console.log(`[${SCRIPT_NAME}] 题目：${topicSpan.textContent}`);
+      let topic_text = topicSpan.textContent;
+      let utf8_buf = new TextEncoder().encode(topic_text).buffer;
+      let hash = window.XXH.h64(utf8_buf, 0).toString(10);
+      let cc = jsonData[hash];
+      if (cc == undefined) {
+        console.warn(`[${SCRIPT_NAME}] 找不到 hash：${hash}`);
+        return;
+      }
+      for (c in cc) {
+        let input = `Mydatalist__ctl0_Mydatalist${topicType}__ctl${t}_xz_${c}`;
+        const OptionInput = iframeDoc.getElementById(input);
+        if (OptionInput && topicSpan) {
+          OptionInput.click();
+          console.log(`[${SCRIPT_NAME}] 已点击`);
+        } else {
+          setTimeout(iframeLoader, CHECK_INTERVAL);
         }
-      };
-      for (t = 0; t != 4; ++t) {
+      }
+    };
+
+    const active_click = (jsonData, iframeDoc) => {
+      for (let t = 0; t != 4; ++t) {
         const multiChoice = 1;
         select(jsonData, iframeDoc, multiChoice, t);
       }
-      for (t = 0; t != 20; ++t) {
+      for (let t = 0; t != 20; ++t) {
         const multiSelect = 2;
         select(jsonData, iframeDoc, multiSelect, t);
       }
-      for (t = 0; t != 15; ++t) {
+      for (let t = 0; t != 15; ++t) {
         const trueOrFalse = 3;
         select(jsonData, iframeDoc, trueOrFalse, t);
       }
@@ -68,7 +75,7 @@
           targetIframe.contentDocument || targetIframe.contentWindow.document;
         GM_xmlhttpRequest({
           method: "GET",
-          url: "https://api.example.com/data.json",
+          url: LIB,
           headers: {
             Accept: "application/json",
           },
@@ -76,6 +83,7 @@
             try {
               if (response.status >= 200 && response.status < 300) {
                 const jsonData = JSON.parse(response.responseText);
+                console.log(jsonData);
                 active_click(jsonData, iframeDoc);
               } else {
                 console.error(
@@ -123,9 +131,9 @@
       if (!isOperationDone) {
         console.warn(
           `[${SCRIPT_NAME}] 操作未完成，可能原因：
-                1. 元素ID已变更
-                2. 跨域限制未解除
-                3. 内容加载超时`
+                  1. 元素ID已变更
+                  2. 跨域限制未解除
+                  3. 内容加载超时`
         );
       }
     }, WAIT_TIMEOUT);

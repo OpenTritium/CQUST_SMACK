@@ -128,7 +128,7 @@ impl Page {
                     .unwrap();
                 });
                 let current_len = sb.len();
-                info!("已经爬下来{current_len}条");
+                info!("已经爬下来 {current_len} 条");
                 if current_len != prev_len {
                     prev_len = current_len;
                     last_change = Instant::now();
